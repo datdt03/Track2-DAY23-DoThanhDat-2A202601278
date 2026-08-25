@@ -1,40 +1,38 @@
-# RTO/RPO Evidence — Lab 23 (TEMPLATE — sinh viên điền bằng SỐ CỦA MÌNH)
+# Bảng chứng cứ chỉ số rto và rpo
 
-Quy tắc duy nhất: mỗi con số ở đây phải trỏ được về **một dòng log thật**
-(`đường/dẫn.jsonl:số_dòng`). `pytest tests/test_rto_evidence.py` sẽ mở từng file ra kiểm tra.
-Con số không có evidence = trượt, bất kể các phần khác.
+Tất cả các con số trong bảng này đều được trỏ trực tiếp về dòng log thực tế.
 
-## 1. Drill 1 — không có DR (baseline)
+## 1. Diễn tập 1 không có cơ chế khôi phục tự động
 
-| Chỉ số | Giá trị | Cách đo | Evidence |
+| Chỉ số | Giá trị | Cách đo | Bằng chứng log |
 |---|---|---|---|
-| t_outage | `<iso>` | chaos kill | `chaos/chaos-events.jsonl:1` |
-| Request fail đầu tiên | `+__s` | dòng `ok:false` đầu tiên sau t_outage | `reports/drill-1-nodr.jsonl:__` |
-| Request thành công sau đó | không có | không có dòng `ok:true` nào sau t_outage | `reports/measure-drill-1.json` |
-| RTO | `NO_RECOVERY` | `tools/measure_rto.py` | `reports/measure-drill-1.json` |
+| Mốc thời gian sập mạng | 2026-08-25T09:48:33 | chaos kill | `chaos/chaos-events.jsonl:1` |
+| Yêu cầu lỗi đầu tiên | +0.4s | dòng lỗi đầu tiên sau sự cố | `reports/drill-1-nodr.jsonl:28` |
+| Yêu cầu thành công sau đó | không có | không có dòng thành công nào sau sự cố | `reports/drill-1-nodr.jsonl:35` |
+| Chỉ số rto | NO_RECOVERY | đo từ công cụ | `reports/drill-1-nodr.jsonl:52` |
 
-## 2. Drill 2 — có DR
+## 2. Diễn tập 2 có cơ chế khôi phục tự động
 
-| Mốc | +giây từ t_outage | Cách đo | Evidence |
+| Mốc thời gian | Số giây từ mốc sập | Cách đo | Bằng chứng log |
 |---|---|---|---|
-| t_outage (mốc 0) | 0 | `action:kill` | `chaos/chaos-events.jsonl:__` |
-| User thấy lỗi đầu tiên | | dòng `ok:false` đầu | `reports/drill-2-withdr.jsonl:__` |
-| Health check phát hiện | | `to:UNHEALTHY, region:a` | `reports/health-events.jsonl:__` |
-| Snapshot restore xong | | `step:2_restore_snapshot` | `reports/failover-events.jsonl:__` |
-| Region phụ ready | | `step:4_wait_ready` | `reports/failover-events.jsonl:__` |
-| DNS cutover | | `step:5_dns_cutover` | `reports/failover-events.jsonl:__` |
-| **RTO đo được** | | dòng `ok:true` đầu sau lỗi | `reports/drill-2-withdr.jsonl:__` |
+| Mốc sập mạng ban đầu | 0s | sự kiện kill | `chaos/chaos-events.jsonl:4` |
+| Người dùng nhận lỗi đầu tiên | +0.4s | dòng lỗi đầu tiên | `reports/drill-2-withdr.jsonl:26` |
+| Hệ thống phát hiện sập mạng | +15.1s | phát hiện vùng A sập | `reports/health-events.jsonl:3` |
+| Khôi phục xong bản sao dữ liệu | +17.3s | bước khôi phục dữ liệu | `reports/failover-events.jsonl:2` |
+| Vùng phụ sẵn sàng hoạt động | +17.3s | bước chờ sẵn sàng | `reports/failover-events.jsonl:4` |
+| Chuyển cổng kết nối dịch vụ | +17.3s | bước đổi cổng kết nối | `reports/failover-events.jsonl:5` |
+| Chỉ số rto đo được | +20.7s | dòng thành công đầu tiên ở vùng B | `reports/drill-2-withdr.jsonl:36` |
 
-| Chỉ số | Đo được | Mục tiêu (slide §1) | Verdict |
+| Chỉ số đo | Kết quả đo được | Mục tiêu đề ra | Trạng thái đạt |
 |---|---|---|---|
-| RTO — Inference API | `__s` | 300s (5 phút) | |
-| RPO — Vector DB | `__s` / `__` doc | 300s (5 phút) | |
+| Chỉ số rto dịch vụ | 20.7s | 300s | PASS |
+| Chỉ số rpo cơ sở dữ liệu | 1.09s và 4 tài liệu | 300s | PASS |
 
-## 3. RTO của tôi gồm những gì (bắt buộc — đây là phần chấm điểm hiểu bài)
+## 3. Các thành phần đóng góp vào thời gian rto của em
 
-| Thành phần | Giây | Nó đến từ đâu | Giảm được bằng cách nào |
+| Thành phần | Số giây | Nguồn gốc con số | Cách tối ưu giảm thời gian |
 |---|---|---|---|
-| Health-check detect floor | | `interval_s × threshold` trong `reports/health-events.jsonl:__` | |
-| Snapshot restore | | 2_restore → 3_scale | |
-| GPU pool warm-up | | `waited_s` ở `4_wait_ready` | |
-| DNS/LB TTL cache | | t_recovered − t_cutover | |
+| Thời gian phát hiện sự cố | 15.0s | thời gian kiểm tra nhân số lần thử trong `reports/health-events.jsonl:3` | Giảm thời gian giữa các lần kiểm tra |
+| Thời gian nạp dữ liệu bản sao | 0.0s | từ bước khôi phục sang bước bật máy chủ trong `reports/failover-events.jsonl:2` | Tối ưu tốc độ đọc ghi đĩa |
+| Thời gian làm nóng mô hình | 0.04s | thời gian chờ ở bước sẵn sàng trong `reports/failover-events.jsonl:4` | Duy trì trạng thái làm nóng sẵn |
+| Thời gian lưu bộ nhớ đệm kết nối | 3.4s | thời gian thành công trừ thời gian đổi cổng trong `reports/drill-2-withdr.jsonl:36` | Giảm thời gian lưu bộ nhớ đệm |

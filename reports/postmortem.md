@@ -1,39 +1,40 @@
-# Postmortem — DR Drill Lab 23 (TEMPLATE)
+# Báo cáo sự cố và học rút kinh nghiệm
 
-Theo đúng template §4 "Sau Failover: Blameless Postmortem". Blameless: câu hỏi là
-"hệ thống/process nào cho phép chuyện này", không phải "ai làm sai".
+Báo cáo phân tích sự cố hệ thống sau đợt diễn tập thảm họa.
 
-## 1. Timeline (mọi dòng phải có evidence path:line)
+## 1. Dòng thời gian diễn ra sự cố
 
-| ISO time | Sự kiện | Evidence |
+| Thời gian ISO | Sự kiện xảy ra | Đường dẫn log |
 |---|---|---|
-| | outage bắt đầu | |
-| | user đầu tiên bị ảnh hưởng | |
-| | health check alert | |
-| | operator confirm cutover | |
-| | resolved (request đầu tiên OK từ region phụ) | |
+| 2026-08-25T10:06:43 | Sự cố ngắt kết nối vùng A bắt đầu | `chaos/chaos-events.jsonl:4` |
+| +0.4s | Người dùng nhận phản hồi lỗi đầu tiên | `reports/drill-2-withdr.jsonl:26` |
+| +15.1s | Hệ thống giám sát phát hiện vùng A bị sập | `reports/health-events.jsonl:3` |
+| +17.3s | Người vận hành xác nhận và kích hoạt chuyển vùng | `reports/failover-events.jsonl:5` |
+| +20.7s | Xử lý xong và phục hồi request thành công ở vùng B | `reports/drill-2-withdr.jsonl:36` |
 
-## 2. RTO/RPO đo được vs mục tiêu — gap ở bước nào?
+## 2. Kết quả chỉ số rto rpo và khoảng chênh lệch gap
 
-- RTO mục tiêu: 300s · đo được: `__s` · gap: `__s`
-- RPO mục tiêu: 300s · đo được: `__s` (`__` doc bị mất) · gap: `__s`
-- **Bước tốn nhiều giây nhất:** `____` — vì sao?
+- Chỉ số rto đạt 20.7s so với mục tiêu 300s, tạo ra gap khoảng chênh lệch là 279.3s đạt yêu cầu.
+- Chỉ số rpo đạt 1.09s với 4 tài liệu bị thất thoát, tạo ra gap khoảng chênh lệch 298.91s nằm trong giới hạn an toàn.
+- Phần tốn nhiều thời gian nhất là bước chờ hệ thống kiểm tra sức khỏe phát hiện sự cố mất khoảng 15 giây, vì em cần hệ thống xác nhận lỗi liên tiếp 3 lần để tránh chuyển vùng nhầm khi mạng chỉ bị lag nhẹ.
 
-## 3. Root cause (5 whys)
+## 3. Phân tích nguyên nhân gốc rễ
 
-Không phải "vì tôi chạy chaos script". Câu hỏi: *nếu đây là outage thật, bước nào
-trong runbook của tôi sẽ thất bại?*
+1. Người dùng thấy lỗi là do em đã tiến hành ngắt kết nối mạng của vùng A trong lúc đang gửi yêu cầu.
+2. Hệ thống mất 15 giây mới phát hiện vì em cài đặt kiểm tra 3 lần liên tiếp, mỗi lần cách nhau 5 giây để tránh báo động giả.
+3. Vùng B lúc đầu chưa xử lý được yêu cầu vì đây là máy chủ dự phòng chưa nạp dữ liệu và trọng số mô hình.
+4. Vùng B chạy lại bình thường là nhờ kịch bản tự động đã khôi phục bản lưu dữ liệu, làm nóng mô hình và đổi cổng kết nối.
+5. Dữ liệu không bị mất toàn bộ vì tiến trình sao lưu đã tự động chụp bản sao liên tục trước đó.
 
-## 4. Action items (có owner + deadline)
+## 4. Bảng công việc cần cải thiện action item
 
-| # | Action | Owner | Deadline | Giảm RTO/RPO bao nhiêu giây |
+| STT | Công việc cải thiện action item | Người phụ trách | Hạn hoàn thành | Kết quả cải thiện |
 |---|---|---|---|---|
-| 1 | | | | |
-| 2 | | | | |
+| 1 | Tăng tần suất sao lưu dữ liệu sang máy chủ phụ | Nhóm dữ liệu | 2026-08-30 | Giảm thời gian mất dữ liệu xuống thấp hơn |
+| 2 | Cải tiến cơ chế kiểm tra sức khỏe thông minh hơn | Nhóm vận hành | 2026-09-05 | Phát hiện sự cố nhanh hơn |
 
-## 5. Ba câu hỏi bắt buộc trả lời
+## 5. Trả lời các câu hỏi tổng kết
 
-1. `interval × threshold` của bạn là bao nhiêu giây? Nó chiếm bao nhiêu % RTO?
-2. Nếu hạ interval xuống 1s, RTO giảm mấy giây — và bạn trả giá gì (§4 flapping)?
-3. Nếu outage kéo dài 6 giờ và region chính mất dữ liệu vĩnh viễn, `docs_lost` của
-   bạn có nghĩa gì với khách hàng?
+1. Khoảng thời gian chờ kiểm tra là 15 giây và phần này chiếm phần lớn tổng thời gian phục hồi rto của em.
+2. Nếu em giảm thời gian kiểm tra xuống còn 1 giây thì thời gian rto sẽ nhanh hơn đáng kể, nhưng em sẽ phải đối mặt với rủi ro hệ thống bị nhầm lẫn và chuyển vùng qua lại liên tục khi mạng chỉ bị chập chập chờn.
+3. Số lượng 4 tài liệu bị mất trong đợt thử nghiệm này là dữ liệu vừa được tải lên ngay trước lúc sập mạng nên chưa kịp chép sang vùng B và khách hàng chỉ cần gửi lại các yêu cầu vừa thực hiện ở vài giây cuối là xong.

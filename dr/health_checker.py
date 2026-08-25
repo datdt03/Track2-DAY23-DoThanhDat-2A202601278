@@ -13,10 +13,6 @@ Yêu cầu (đọc §4 "Kiến Trúc Health-Check-Based Failover" + §2 "DNS Fai
 
 Chạy:  python dr/health_checker.py --interval 5 --threshold 3 --duration 300 \
               --out reports/health-events.jsonl
-
-CÂU HỎI PHẢI TRẢ LỜI TRƯỚC KHI VIẾT (ghi câu trả lời vào reports/postmortem.md):
-  interval=5s, threshold=3 -> sớm nhất bạn có thể phát hiện outage là bao nhiêu giây?
-  Con số đó nằm TRONG RTO của bạn. Muốn RTO 5 phút thì được phép chọn interval bao nhiêu?
 """
 import argparse
 import json
@@ -29,13 +25,82 @@ URL = {"a": "http://127.0.0.1:8001", "b": "http://127.0.0.1:8002"}
 
 
 def probe(region: str, timeout: float) -> tuple[bool, str]:
-    """TODO: trả về (ready, reason). Timeout PHẢI có — netblock làm request treo mãi."""
-    raise NotImplementedError
+    """Trả về (ready, reason). Timeout PHẢI có — netblock làm request treo mãi."""
+    url = f"{URL[region]}/readyz"
+    try:
+        r = httpx.get(url, timeout=timeout)
+        if r.status_code == 200:
+            data = r.json()
+            if data.get("ready"):
+                return True, "ok"
+            return False, f"not_ready:{','.join(data.get('reasons', []))}"
+        return False, f"status_{r.status_code}"
+    except Exception as e:
+        return False, str(e)
 
 
 def run(interval: float, timeout: float, threshold: int, duration: float, out: pathlib.Path):
-    """TODO: vòng lặp poll + phát hiện transition + ghi JSONL."""
-    raise NotImplementedError
+    """Vòng lặp poll + phát hiện transition + ghi JSONL."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    current_state = {"a": "HEALTHY", "b": "HEALTHY"}
+    consecutive_fails = {"a": 0, "b": 0}
+    consecutive_successes = {"a": 0, "b": 0}
+
+    start_time = time.time()
+
+    while time.time() - start_time < duration:
+        t_cycle_start = time.time()
+        for region in ["a", "b"]:
+            is_ready, reason = probe(region, timeout)
+            if is_ready:
+                consecutive_fails[region] = 0
+                consecutive_successes[region] += 1
+                if current_state[region] == "UNHEALTHY" and consecutive_successes[region] >= 1:
+                    prev = current_state[region]
+                    current_state[region] = "HEALTHY"
+                    now = time.time()
+                    event = {
+                        "event": "state_change",
+                        "ts": now,
+                        "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                        "region": region,
+                        "from": prev,
+                        "to": "HEALTHY",
+                        "reason": reason,
+                        "interval_s": interval,
+                        "threshold": threshold,
+                        "consecutive_fails": consecutive_fails[region]
+                    }
+                    with open(out, "a") as f:
+                        f.write(json.dumps(event) + "\n")
+                    print(f"HEALTH {json.dumps(event)}")
+            else:
+                consecutive_successes[region] = 0
+                consecutive_fails[region] += 1
+                if current_state[region] == "HEALTHY" and consecutive_fails[region] >= threshold:
+                    prev = current_state[region]
+                    current_state[region] = "UNHEALTHY"
+                    now = time.time()
+                    event = {
+                        "event": "state_change",
+                        "ts": now,
+                        "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
+                        "region": region,
+                        "from": prev,
+                        "to": "UNHEALTHY",
+                        "reason": reason,
+                        "interval_s": interval,
+                        "threshold": threshold,
+                        "consecutive_fails": consecutive_fails[region]
+                    }
+                    with open(out, "a") as f:
+                        f.write(json.dumps(event) + "\n")
+                    print(f"HEALTH {json.dumps(event)}")
+
+        elapsed = time.time() - t_cycle_start
+        to_sleep = max(0.0, interval - elapsed)
+        time.sleep(to_sleep)
 
 
 if __name__ == "__main__":
